@@ -1,0 +1,18 @@
+# Model checkpoints
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# PyCharm
+.idea/
+
+# Data files (too large for git)
+*.zip
+*.npy
+*.hdf5
