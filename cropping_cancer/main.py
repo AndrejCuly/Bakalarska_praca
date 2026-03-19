@@ -4,8 +4,8 @@ import numpy as np
 import pydicom
 
 dicom_folder = r"D:\CSAW\2021-204-1-1\data"        # SSD folder with dicoms
-mask_folder = r"C:\Users\culya\Desktop\data_bakalarka\binary_masks"          # local masks
-output_folder = r"C:\Users\culya\Desktop\output_crops2"
+mask_folder = r"C:\Users\user\Desktop\binary_masks"          # local masks
+output_folder = r"C:\Users\user\Desktop\where\tp\output"
 
 patch_size = 256
 
