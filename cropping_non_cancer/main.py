@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import random
 
-dataset_root = r"C:\Users\culya\Desktop\data_bakalarka\data\pngs\cancer_free"
-output_root = r"C:\Users\culya\Desktop\data_bakalarka\data\patches\crops_cancer_free"
+dataset_root = r"C:\Users\user\Desktop\data_bakalarka\data\pngs\cancer_free"
+output_root = r"C:\Users\user\Desktop\data_bakalarka\data\patches\crops_cancer_free"
 
 patch_size = 256
 
