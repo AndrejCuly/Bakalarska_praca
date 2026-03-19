@@ -8,9 +8,9 @@
 
 using namespace std;
 
-#define SOURCE_FOLDER R"(C:\Users\culya\Desktop\data_bakalarka\data\patches\crops_cancer)"
-#define TARGET_FOLDER R"(C:\Users\culya\Desktop\gec)"
-#define CSV_PATH R"(C:\Users\culya\Desktop\data_bakalarka\data_info\patient_stats.csv)"
+#define SOURCE_FOLDER R"(C:\Users\user\example\path\folder\where\crops_cancer)"
+#define TARGET_FOLDER R"(C:\Users\user\where\save\renamed)"
+#define CSV_PATH R"(C:\Users\user\data_info\patient_stats.csv)"
 
 typedef struct {
     int id;
@@ -27,8 +27,7 @@ void crtFolder(filesystem::path folder_path) {
     else cout << "Folder exists: " << folder_path.string() << endl;
 }
 
-string extractView(const string& filename)
-{
+string extractView(const string& filename){
     if (filename.find("L_CC") != string::npos) return "L_CC";
     if (filename.find("R_CC") != string::npos) return "R_CC";
     if (filename.find("L_MLO") != string::npos) return "L_MLO";
