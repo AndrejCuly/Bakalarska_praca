@@ -3,7 +3,7 @@
 #include <sstream>
 #include <vector>
 
-#define CSV_PATH R"(C:\Users\culya\Desktop\data_bakalarka\data_info\CSAW_CaseControl_WITHOUTHIDDEN_for_anon_dataset_210902.csv)"
+#define CSV_PATH R"(C:\Users\user\Desktop\data_bakalarka\data_info\csv_name.csv)"
 
 typedef struct {
     int patient_id;
