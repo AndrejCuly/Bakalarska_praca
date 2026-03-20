@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.amp import autocast, GradScaler
 
 from experiments.classification.whole_mamms.dataset3d_pngs import MammogramPNGDataset
-from unet3d_model.unet3d import UNet3D
+from model1.unet3d_model.unet3d import UNet3D
 
 # -------------------------------------------------------------------------
 # Config
