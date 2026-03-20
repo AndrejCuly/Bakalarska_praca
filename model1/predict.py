@@ -1,7 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 from experiments.segmentation.dataset3d import Mammogram3DDataset
-from unet3d_model.unet3d import UNet3D
+from model1.unet3d_model.unet3d import UNet3D
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

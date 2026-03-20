@@ -14,7 +14,6 @@ Key fixes over the previous version:
    updated accordingly.
 """
 
-import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -22,7 +21,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.amp import autocast, GradScaler
 
 from dataset3d import Mammogram3DDataset
-from unet3d_model.unet3d import UNet3D
+from model1.unet3d_model.unet3d import UNet3D
 
 # -------------------------------------------------------------------------
 # Config
