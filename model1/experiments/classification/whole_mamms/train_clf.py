@@ -18,9 +18,12 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.amp import autocast, GradScaler
 from sklearn.metrics import roc_auc_score, confusion_matrix
 import numpy as np
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')))
 
-from experiments.classification.whole_mamms.dataset3d_clf import MammogramClassificationDataset
-from experiments.classification.classifier3d import MammogramClassifier
+from model1.experiments.classification.whole_mamms.dataset3d_clf import MammogramClassificationDataset
+from model1.experiments.classification.classifier3d import MammogramClassifier
 
 # -------------------------------------------------------------------------
 # Config
@@ -31,13 +34,13 @@ CANCEROUS_VAL     = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_process
 CANCER_FREE_VAL   = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed\val\cancer_free"
 
 EPOCHS      = 50
-BATCH_SIZE  = 8
-NUM_WORKERS = 12
-LR          = 1e-4
-CHECKPOINT  = "best_model_clf.pth"
+BATCH_SIZE  = 4
+NUM_WORKERS = 8
+LR          = 1e-6
+CHECKPOINT = os.path.join(os.path.dirname(__file__), 'results', 'best_model_clf.pth')
 
 # Focal loss gamma — higher = more focus on hard examples
-FOCAL_GAMMA = 2.0
+FOCAL_GAMMA = 0.5
 
 # -------------------------------------------------------------------------
 # Focal Loss
@@ -168,7 +171,7 @@ def main():
 
     # Focal loss with pos_weight for extra imbalance handling
     pos_weight = torch.tensor([n_neg / n_pos]).to(device)
-    criterion  = FocalLoss(gamma=FOCAL_GAMMA, pos_weight=pos_weight)
+    criterion  = FocalLoss(gamma=FOCAL_GAMMA, pos_weight=None)
 
     optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(

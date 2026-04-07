@@ -1,17 +1,18 @@
 """
-train_clf_patches.py
+train_clf_patches_resnet.py
 
-Patch-level binary classification using the shared-weight 3D CNN encoder.
+Patch-level binary classification using Model 2 — MedicalNet ResNet-10.
 
 Label:
     _tumor patches from cancerous patients    → 1
     _normal_0 patches from cancerous patients → 0
     all cancer_free patches                   → 0
-
-Saves best model to best_model_clf_patches.pth
 """
+
 import sys
 import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..')))
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -19,10 +20,9 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.amp import autocast, GradScaler
 from sklearn.metrics import roc_auc_score, confusion_matrix
 import numpy as np
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__),'..', '..', '..', '..')))
 
 from model1.experiments.classification.patches.dataset3d_clf_patches import PatchClassificationDataset
-from model1.experiments.classification.classifier3d import MammogramClassifier
+from model2.resnet3d import MammogramResNetClassifier, load_pretrained_resnet
 
 # -------------------------------------------------------------------------
 # Config
@@ -32,12 +32,15 @@ CANCER_FREE_TRAIN = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\t
 CANCER_VAL        = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\val\cancer"
 CANCER_FREE_VAL   = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\val\cancer_free"
 
+PRETRAINED_WEIGHTS = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model2\resnet_10.pth"
+CHECKPOINT         = os.path.join(os.path.dirname(__file__), 'results', 'best_model_resnet_clf_patches.pth')
+
 EPOCHS      = 50
 BATCH_SIZE  = 4
 NUM_WORKERS = 8
-LR          = 1e-6
-CHECKPOINT = os.path.join(os.path.dirname(__file__), 'results', 'best_model_clf_patches.pth')
 FOCAL_GAMMA = 0.5
+LR_ENCODER  = 1e-5
+LR_HEAD     = 1e-4
 
 # -------------------------------------------------------------------------
 # Focal Loss
@@ -50,12 +53,12 @@ class FocalLoss(nn.Module):
         self.pos_weight = pos_weight
 
     def forward(self, logits, targets):
-        bce     = nn.functional.binary_cross_entropy_with_logits(
+        bce    = nn.functional.binary_cross_entropy_with_logits(
             logits, targets, pos_weight=self.pos_weight, reduction='none'
         )
-        prob    = torch.sigmoid(logits)
-        p_t     = prob * targets + (1 - prob) * (1 - targets)
-        loss    = ((1 - p_t) ** self.gamma) * bce
+        prob   = torch.sigmoid(logits)
+        p_t    = prob * targets + (1 - prob) * (1 - targets)
+        loss   = ((1 - p_t) ** self.gamma) * bce
         return loss.mean()
 
 # -------------------------------------------------------------------------
@@ -65,6 +68,14 @@ class FocalLoss(nn.Module):
 def compute_metrics(all_logits, all_labels):
     probs  = torch.sigmoid(torch.tensor(all_logits)).numpy()
     labels = np.array(all_labels)
+
+    # Filter out NaN predictions
+    valid = ~np.isnan(probs)
+    if valid.sum() == 0:
+        return {'auc': float('nan'), 'accuracy': 0, 'sensitivity': 0,
+                'specificity': 0, 'tp': 0, 'tn': 0, 'fp': 0, 'fn': 0}
+    probs  = probs[valid]
+    labels = labels[valid]
 
     if len(np.unique(labels)) < 2:
         return {'auc': float('nan'), 'accuracy': 0, 'sensitivity': 0,
@@ -110,41 +121,39 @@ def main():
 
     weights = [n_neg / n_pos if s['label'] == 1 else 1.0
                for s in train_dataset.samples]
-    sampler = WeightedRandomSampler(weights, num_samples=len(weights),
-                                    replacement=True)
+    sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
 
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        sampler=sampler,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        persistent_workers=False,
-        #prefetch_factor=2,
+        train_dataset, batch_size=BATCH_SIZE, sampler=sampler,
+        num_workers=NUM_WORKERS, pin_memory=False, persistent_workers=False,
     )
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        persistent_workers=False,
-        #prefetch_factor=2,
+        val_dataset, batch_size=BATCH_SIZE, shuffle=False,
+        num_workers=NUM_WORKERS, pin_memory=False, persistent_workers=False,
     )
 
     print(f"Batches per epoch: {len(train_loader)}")
 
-    model = MammogramClassifier(num_views=4, embed_dim=256).to(device)
+    model = MammogramResNetClassifier(num_views=4, embed_dim=256)
+    model = load_pretrained_resnet(model, PRETRAINED_WEIGHTS, device=device)
+    model = model.to(device)
+
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params:,}")
 
+    optimizer = optim.Adam([
+        {'params': model.encoder.parameters(),    'lr': LR_ENCODER, 'weight_decay': 1e-4},
+        {'params': model.classifier.parameters(), 'lr': LR_HEAD,    'weight_decay': 0},
+    ])
+
     criterion = FocalLoss(gamma=FOCAL_GAMMA, pos_weight=None)
-    optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=5
     )
-    scaler  = GradScaler("cuda")
+    scaler   = GradScaler("cuda")
     best_auc = -1.0
+
+    os.makedirs(os.path.dirname(CHECKPOINT), exist_ok=True)
 
     for epoch in range(EPOCHS):
         print(f"\n========== Epoch {epoch+1}/{EPOCHS} ==========")
@@ -164,6 +173,12 @@ def main():
 
             with autocast("cuda"):
                 logits = model(views)
+                with autocast("cuda"):
+                    logits = model(views)
+                    loss = criterion(logits, labels)
+
+                if torch.isnan(loss):
+                    continue
                 loss   = criterion(logits, labels)
 
             if torch.isnan(loss):
@@ -177,7 +192,7 @@ def main():
 
             train_loss += loss.item()
 
-            if i % 50 == 0:
+            if i % 100 == 0:
                 print(f"  Batch {i}/{len(train_loader)}  loss: {loss.item():.4f}")
 
         train_loss /= len(train_loader)

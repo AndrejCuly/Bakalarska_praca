@@ -1,5 +1,14 @@
 """
-train_hybrid_patches.py — same as train_hybrid.py but for patches dataset.
+train_hybrid_patches_resnet.py
+
+Trains and evaluates classical ML classifiers on top of the 256-dim
+features extracted from the frozen Model 2 ResNet-10 patches encoder.
+
+Output types:
+    - Decision Tree:        binary classification (0/1)
+    - Random Forest:        binary classification (0/1)
+    - Logistic Regression:  probability score (0-1)
+    - Gradient Boosting:    probability score (0-1)
 """
 
 import sys
@@ -142,14 +151,14 @@ def main():
 
     ax.set_xlabel('False Positive Rate (1 - Specificity)')
     ax.set_ylabel('True Positive Rate (Sensitivity)')
-    ax.set_title('ROC Curves — Hybrid 3D CNN + Classical ML (Patches)')
+    ax.set_title('ROC Curves — Model 2 ResNet-10 + Classical ML (Patches)')
     ax.legend(loc='lower right')
     plt.tight_layout()
     plt.savefig(ROC_PLOT, dpi=150)
     print(f"\nROC curves saved to {ROC_PLOT}")
 
     print("\n" + "="*60)
-    print("SUMMARY — PATCHES")
+    print("SUMMARY — Model 2 ResNet-10 Hybrid Patches")
     print("="*60)
     print(f"{'Classifier':<25} {'Type':<15} {'AUC':>7} {'Sens':>7} {'Spec':>7}")
     print("-"*60)
@@ -159,7 +168,7 @@ def main():
               f"{r['sensitivity']:>7.4f} {r['specificity']:>7.4f}")
 
     with open(RESULTS_FILE, 'w') as f:
-        f.write("HYBRID EXPERIMENT RESULTS — PATCHES\n")
+        f.write("HYBRID EXPERIMENT RESULTS — Model 2 ResNet-10 Patches\n")
         f.write("="*60 + "\n\n")
         f.write(f"Train+Val samples: {len(X_trainval)} (positives: {int(y_trainval.sum())})\n")
         f.write(f"Test samples:      {len(X_test)} (positives: {int(y_test.sum())})\n\n")

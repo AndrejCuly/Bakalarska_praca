@@ -1,5 +1,14 @@
 """
-train_hybrid_patches.py — same as train_hybrid.py but for patches dataset.
+train_hybrid_resnet.py
+
+Trains and evaluates classical ML classifiers on top of the 256-dim
+features extracted from the frozen Model 2 ResNet-10 encoder.
+
+Output types:
+    - Decision Tree:        binary classification (0/1)
+    - Random Forest:        binary classification (0/1)
+    - Logistic Regression:  probability score (0-1)
+    - Gradient Boosting:    probability score (0-1)
 """
 
 import sys
@@ -18,10 +27,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, confusion_matrix, roc_curve
 
-FEATURES_DIR = os.path.join(os.path.dirname(__file__), 'features_patches')
+FEATURES_DIR = os.path.join(os.path.dirname(__file__), 'features')
 RESULTS_DIR  = os.path.join(os.path.dirname(__file__), 'results')
-ROC_PLOT     = os.path.join(RESULTS_DIR, 'roc_curve_hybrid_patches.png')
-RESULTS_FILE = os.path.join(RESULTS_DIR, 'hybrid_patches_results.txt')
+ROC_PLOT     = os.path.join(RESULTS_DIR, 'roc_curve_hybrid.png')
+RESULTS_FILE = os.path.join(RESULTS_DIR, 'hybrid_results.txt')
 
 IS_REGRESSION = {
     "Decision Tree":       False,
@@ -63,7 +72,7 @@ def evaluate(name, clf, X_test, y_test, patients, ax=None):
     print(f"  Actual 0       {int(tn):5d}         {int(fp):5d}")
     print(f"  Actual 1       {int(fn):5d}         {int(tp):5d}")
 
-    csv_name = name.lower().replace(' ', '_') + '_patches_results.csv'
+    csv_name = name.lower().replace(' ', '_') + '_results.csv'
     csv_path = os.path.join(RESULTS_DIR, csv_name)
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -142,14 +151,14 @@ def main():
 
     ax.set_xlabel('False Positive Rate (1 - Specificity)')
     ax.set_ylabel('True Positive Rate (Sensitivity)')
-    ax.set_title('ROC Curves — Hybrid 3D CNN + Classical ML (Patches)')
+    ax.set_title('ROC Curves — Model 2 ResNet-10 + Classical ML')
     ax.legend(loc='lower right')
     plt.tight_layout()
     plt.savefig(ROC_PLOT, dpi=150)
     print(f"\nROC curves saved to {ROC_PLOT}")
 
     print("\n" + "="*60)
-    print("SUMMARY — PATCHES")
+    print("SUMMARY — Model 2 ResNet-10 Hybrid")
     print("="*60)
     print(f"{'Classifier':<25} {'Type':<15} {'AUC':>7} {'Sens':>7} {'Spec':>7}")
     print("-"*60)
@@ -159,10 +168,10 @@ def main():
               f"{r['sensitivity']:>7.4f} {r['specificity']:>7.4f}")
 
     with open(RESULTS_FILE, 'w') as f:
-        f.write("HYBRID EXPERIMENT RESULTS — PATCHES\n")
+        f.write("HYBRID EXPERIMENT RESULTS — Model 2 ResNet-10\n")
         f.write("="*60 + "\n\n")
-        f.write(f"Train+Val samples: {len(X_trainval)} (positives: {int(y_trainval.sum())})\n")
-        f.write(f"Test samples:      {len(X_test)} (positives: {int(y_test.sum())})\n\n")
+        f.write(f"Train+Val patients: {len(X_trainval)} (positives: {int(y_trainval.sum())})\n")
+        f.write(f"Test patients:      {len(X_test)} (positives: {int(y_test.sum())})\n\n")
         for line in results_text:
             f.write(line + "\n")
     print(f"Results saved to {RESULTS_FILE}")

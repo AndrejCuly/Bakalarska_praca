@@ -1,16 +1,9 @@
 """
 dataset3d_clf.py
 
-Per-patient classification dataset for the 3D CNN classifier.
-
-Each sample = one patient → tensor of shape [4, 1, T, H, W]
-containing all 4 views (L_CC, R_CC, L_MLO, R_MLO) stacked.
-
-Label: 1.0 = cancerous, 0.0 = cancer_free
-
-Speed optimization: if a .pt cached tensor exists next to the .png,
-it is loaded directly with torch.load() instead of PIL decode +
-resize + normalize. Run cache_dataset.py once to generate .pt files.
+Per-patient classification dataset for model1_experiment.
+Uses rectangular 384x512 images from dataset_processed_v2.
+No .pt cache support — loads PNGs directly.
 """
 
 import os
@@ -22,7 +15,8 @@ import torchvision.transforms as transforms
 from torchvision.transforms import InterpolationMode
 
 MAX_T    = 6
-IMG_SIZE = 256
+IMG_H    = 512
+IMG_W    = 384
 VIEWS    = ['L_CC', 'R_CC', 'L_MLO', 'R_MLO']
 
 
@@ -34,27 +28,14 @@ def parse_filename(filename):
     return None
 
 
-def load_image(png_path, img_transform, img_size):
-    """
-    Load image from .pt cache if available, otherwise from .png.
-    Returns tensor of shape [1, H, W].
-    """
-    pt_path = png_path.replace('.png', '.pt')
-    if os.path.exists(pt_path):
-        return torch.load(pt_path, weights_only=True)
-    # Fallback to PIL loading
-    img = Image.open(png_path).convert('L')
-    return img_transform(img)
-
-
 class MammogramClassificationDataset(Dataset):
     """
     Per-patient classification dataset.
 
     Output per sample:
         views:    [4, 1, T, H, W]  float32, normalized [-1, 1]
-        pad_mask: [4, T]           bool, True = real slice
-        label:    scalar float32,  1.0 = cancerous, 0.0 = cancer_free
+        pad_mask: [4, T]           bool
+        label:    scalar float32   1.0 = cancerous, 0.0 = cancer_free
         patient:  str
     """
 
@@ -63,13 +44,15 @@ class MammogramClassificationDataset(Dataset):
         cancerous_dir,
         cancer_free_dir=None,
         max_t=MAX_T,
-        img_size=IMG_SIZE,
+        img_h=IMG_H,
+        img_w=IMG_W,
     ):
-        self.max_t    = max_t
-        self.img_size = img_size
+        self.max_t = max_t
+        self.img_h = img_h
+        self.img_w = img_w
 
         self.img_transform = transforms.Compose([
-            transforms.Resize((img_size, img_size),
+            transforms.Resize((img_h, img_w),
                               interpolation=InterpolationMode.BILINEAR),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5])
@@ -136,18 +119,19 @@ class MammogramClassificationDataset(Dataset):
 
         for view in VIEWS:
             files = view_files[view]
-            T     = min(max(len(files) - 1, 1), self.max_t)
+            T     = min(max(len(files) - 1, 1), self.max_t) if len(files) > 0 else 0
 
             imgs     = []
             pad_mask = []
 
             for i in range(self.max_t):
                 if i < T:
-                    img = load_image(files[i], self.img_transform, self.img_size)
+                    img = Image.open(files[i]).convert('L')
+                    img = self.img_transform(img)
                     imgs.append(img)
                     pad_mask.append(1)
                 else:
-                    imgs.append(torch.zeros(1, self.img_size, self.img_size))
+                    imgs.append(torch.zeros(1, self.img_h, self.img_w))
                     pad_mask.append(0)
 
             imgs     = torch.stack(imgs, dim=0).permute(1, 0, 2, 3)
