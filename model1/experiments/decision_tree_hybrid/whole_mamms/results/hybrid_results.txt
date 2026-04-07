@@ -4,7 +4,7 @@ HYBRID EXPERIMENT RESULTS
 Train+Val patients: 5320 (positives: 174)
 Test patients:      942 (positives: 33)
 
-Decision Tree: AUC=0.7287, Sens=0.7273, Spec=0.7184
-Random Forest: AUC=0.7520, Sens=0.2424, Spec=0.9186
-Logistic Regression: AUC=0.7988, Sens=0.8485, Spec=0.6392
-Gradient Boosting: AUC=0.7230, Sens=0.0000, Spec=0.9967
+Decision Tree (classification): AUC=0.7179, Sens=0.8788, Spec=0.6194
+Random Forest (classification): AUC=0.7419, Sens=0.2727, Spec=0.8724
+Logistic Regression (scoring): AUC=0.7779, Sens=0.8182, Spec=0.6007
+Gradient Boosting (scoring): AUC=0.7178, Sens=0.0000, Spec=0.9989

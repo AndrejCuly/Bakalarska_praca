@@ -253,7 +253,7 @@ class PatchClassificationDataset(Dataset):
 
         for view in VIEWS:
             files = view_files.get(view, [])
-            T     = min(len(files), self.max_t)
+            T = min(max(len(files) - 1, 1), self.max_t) if len(files) > 0 else 0
 
             imgs     = []
             pad_mask = []

@@ -1,17 +1,10 @@
 """
-train_clf_patches.py
+train_clf.py
 
-Patch-level binary classification using the shared-weight 3D CNN encoder.
-
-Label:
-    _tumor patches from cancerous patients    → 1
-    _normal_0 patches from cancerous patients → 0
-    all cancer_free patches                   → 0
-
-Saves best model to best_model_clf_patches.pth
+Classification training for model1_experiment.
+Uses dataset_processed_v2 (384x512 rectangular images).
 """
-import sys
-import os
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -19,28 +12,28 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.amp import autocast, GradScaler
 from sklearn.metrics import roc_auc_score, confusion_matrix
 import numpy as np
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__),'..', '..', '..', '..')))
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from model1.experiments.classification.patches.dataset3d_clf_patches import PatchClassificationDataset
+from model1_experiment.dataset3d_clf import MammogramClassificationDataset
 from model1.experiments.classification.classifier3d import MammogramClassifier
 
 # -------------------------------------------------------------------------
 # Config
 # -------------------------------------------------------------------------
-CANCER_TRAIN      = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\train\cancer"
-CANCER_FREE_TRAIN = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\train\cancer_free"
-CANCER_VAL        = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\val\cancer"
-CANCER_FREE_VAL   = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\val\cancer_free"
+CANCEROUS_TRAIN   = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed_v2\train\cancerous"
+CANCER_FREE_TRAIN = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed_v2\train\cancer_free"
+CANCEROUS_VAL     = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed_v2\val\cancerous"
+CANCER_FREE_VAL   = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed_v2\val\cancer_free"
 
 EPOCHS      = 50
-BATCH_SIZE  = 4
+BATCH_SIZE  = 2
 NUM_WORKERS = 8
 LR          = 1e-6
-CHECKPOINT = os.path.join(os.path.dirname(__file__), 'results', 'best_model_clf_patches.pth')
+CHECKPOINT  = os.path.join(os.path.dirname(__file__), 'results', 'best_model_clf.pth')
 FOCAL_GAMMA = 0.5
 
-# -------------------------------------------------------------------------
-# Focal Loss
 # -------------------------------------------------------------------------
 
 class FocalLoss(nn.Module):
@@ -50,17 +43,14 @@ class FocalLoss(nn.Module):
         self.pos_weight = pos_weight
 
     def forward(self, logits, targets):
-        bce     = nn.functional.binary_cross_entropy_with_logits(
+        bce    = nn.functional.binary_cross_entropy_with_logits(
             logits, targets, pos_weight=self.pos_weight, reduction='none'
         )
-        prob    = torch.sigmoid(logits)
-        p_t     = prob * targets + (1 - prob) * (1 - targets)
-        loss    = ((1 - p_t) ** self.gamma) * bce
+        prob   = torch.sigmoid(logits)
+        p_t    = prob * targets + (1 - prob) * (1 - targets)
+        loss   = ((1 - p_t) ** self.gamma) * bce
         return loss.mean()
 
-# -------------------------------------------------------------------------
-# Metrics
-# -------------------------------------------------------------------------
 
 def compute_metrics(all_logits, all_labels):
     probs  = torch.sigmoid(torch.tensor(all_logits)).numpy()
@@ -83,26 +73,23 @@ def compute_metrics(all_logits, all_labels):
         'fp': int(fp), 'fn': int(fn),
     }
 
-# -------------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------------
 
 def main():
     torch.backends.cudnn.benchmark = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Device:", device)
 
-    train_dataset = PatchClassificationDataset(
-        cancer_dir=CANCER_TRAIN,
+    train_dataset = MammogramClassificationDataset(
+        cancerous_dir=CANCEROUS_TRAIN,
         cancer_free_dir=CANCER_FREE_TRAIN,
     )
-    val_dataset = PatchClassificationDataset(
-        cancer_dir=CANCER_VAL,
+    val_dataset = MammogramClassificationDataset(
+        cancerous_dir=CANCEROUS_VAL,
         cancer_free_dir=CANCER_FREE_VAL,
     )
 
-    print(f"Train samples: {len(train_dataset)}")
-    print(f"Val samples:   {len(val_dataset)}")
+    print(f"Train patients: {len(train_dataset)}")
+    print(f"Val patients:   {len(val_dataset)}")
 
     n_pos = sum(1 for s in train_dataset.samples if s['label'] == 1)
     n_neg = sum(1 for s in train_dataset.samples if s['label'] == 0)
@@ -114,27 +101,17 @@ def main():
                                     replacement=True)
 
     train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        sampler=sampler,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        persistent_workers=False,
-        #prefetch_factor=2,
+        train_dataset, batch_size=BATCH_SIZE, sampler=sampler,
+        num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=True,
     )
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        pin_memory=False,
-        persistent_workers=False,
-        #prefetch_factor=2,
+        val_dataset, batch_size=BATCH_SIZE, shuffle=False,
+        num_workers=NUM_WORKERS, pin_memory=True, persistent_workers=True,
     )
 
     print(f"Batches per epoch: {len(train_loader)}")
 
-    model = MammogramClassifier(num_views=4, embed_dim=256).to(device)
+    model     = MammogramClassifier(num_views=4, embed_dim=256).to(device)
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {total_params:,}")
 
@@ -143,8 +120,10 @@ def main():
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='max', factor=0.5, patience=5
     )
-    scaler  = GradScaler("cuda")
+    scaler   = GradScaler("cuda")
     best_auc = -1.0
+
+    os.makedirs(os.path.dirname(CHECKPOINT), exist_ok=True)
 
     for epoch in range(EPOCHS):
         print(f"\n========== Epoch {epoch+1}/{EPOCHS} ==========")
@@ -161,7 +140,6 @@ def main():
             labels = labels.to(device)
 
             optimizer.zero_grad()
-
             with autocast("cuda"):
                 logits = model(views)
                 loss   = criterion(logits, labels)
@@ -184,19 +162,15 @@ def main():
         print(f"Train loss: {train_loss:.4f}")
 
         model.eval()
-        val_loss   = 0.0
-        all_logits = []
-        all_labels = []
+        val_loss, all_logits, all_labels = 0.0, [], []
 
         with torch.no_grad():
             for views, pad_mask, labels, patients in val_loader:
                 views  = views.to(device)
                 labels = labels.to(device)
-
                 with autocast("cuda"):
                     logits = model(views)
                     loss   = criterion(logits, labels)
-
                 val_loss   += loss.item()
                 all_logits.extend(logits.cpu().tolist())
                 all_labels.extend(labels.cpu().tolist())

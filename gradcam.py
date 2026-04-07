@@ -1,0 +1,491 @@
+"""
+gradcam.py
+
+3D GradCAM visualization for mammogram sequence classifiers.
+Generates heatmap overlays for all 4 views of true positive patients.
+
+Works with:
+    - Model 1 (MammogramClassifier - custom 3D CNN)
+    - Model 2 (MammogramResNetClassifier - MedicalNet ResNet-10)
+
+For each true positive patient, for each view:
+    - Saves a SEPARATE figure per view: {patient_id}_{view}_gradcam.png
+    - Each figure has one row per real exam
+    - Each row shows 3 panels: Original | GradCAM overlay | Mask
+
+Usage:
+    Edit CONFIG section below, then run:
+    python gradcam.py
+"""
+
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+import torch
+import numpy as np
+import cv2
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from torch.utils.data import DataLoader
+
+# -------------------------------------------------------------------------
+# CONFIG — edit these for each run
+# -------------------------------------------------------------------------
+
+MODEL_TYPE = "model2"   # "model1" or "model2"
+DATA_TYPE  = "whole"    # "whole" | "whole_v2" (512x384) | "patches"
+
+CANCEROUS_TEST_WHOLE      = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed\test\cancerous"
+CANCER_FREE_TEST_WHOLE    = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed\test\cancer_free"
+
+CANCEROUS_TEST_WHOLE_V2   = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed_v2\test\cancerous"
+CANCER_FREE_TEST_WHOLE_V2 = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed_v2\test\cancer_free"
+
+CANCER_TEST_PATCHES      = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\test\cancer"
+CANCER_FREE_TEST_PATCHES = r"C:\Users\culya\Desktop\data_bakalarka\data\patches_split\test\cancer_free"
+
+CHECKPOINT_MODEL1_WHOLE    = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model1\experiments\classification\whole_mamms\results\best_model_clf.pth"
+CHECKPOINT_MODEL1_WHOLE_V2 = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model1_experiment\results\best_model_clf.pth"
+CHECKPOINT_MODEL1_PATCHES  = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model1\experiments\classification\patches\results\best_model_clf_patches.pth"
+CHECKPOINT_MODEL2_WHOLE    = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model2\experiments\classification\whole_mamms\results\best_model_resnet_clf.pth"
+CHECKPOINT_MODEL2_PATCHES  = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model2\experiments\classification\patches\results\best_model_resnet_clf_patches.pth"
+
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'results', 'gradcam',
+                          f'{MODEL_TYPE}_{DATA_TYPE}')
+
+# -------------------------------------------------------------------------
+# Dynamic imports
+# -------------------------------------------------------------------------
+
+if MODEL_TYPE == "model1":
+    from model1.experiments.classification.classifier3d import MammogramClassifier
+else:
+    from model2.resnet3d import MammogramResNetClassifier
+
+if DATA_TYPE in ("whole", "whole_v2"):
+    from model1.experiments.classification.whole_mamms.dataset3d_clf import MammogramClassificationDataset
+else:
+    from model1.experiments.classification.patches.dataset3d_clf_patches import PatchClassificationDataset
+
+# -------------------------------------------------------------------------
+# GradCAM implementation
+# -------------------------------------------------------------------------
+
+class GradCAM3D:
+    def __init__(self, model, target_layer):
+        self.model        = model
+        self.target_layer = target_layer
+        self.activations  = None
+        self.gradients    = None
+        self.forward_hook  = target_layer.register_forward_hook(self._save_activations)
+        self.backward_hook = target_layer.register_full_backward_hook(self._save_gradients)
+
+    def _save_activations(self, module, input, output):
+        self.activations = output.detach()
+
+    def _save_gradients(self, module, grad_input, grad_output):
+        self.gradients = grad_output[0].detach()
+
+    def generate(self, input_tensor):
+        self.model.eval()
+        input_tensor = input_tensor.clone().requires_grad_(True)
+
+        output = self.model(input_tensor)
+        self.model.zero_grad()
+        output[0].backward()
+
+        weights = self.gradients.mean(dim=[2, 3, 4], keepdim=True)
+        cam = (weights * self.activations).sum(dim=1, keepdim=True)
+        cam = torch.relu(cam).squeeze().cpu().numpy()
+
+        if cam.ndim == 2:
+            cam = cam[np.newaxis, ...]
+
+        # Per-slice percentile stretch — forces each slice to use full color range
+        for t in range(cam.shape[0]):
+            s = cam[t]
+            p_low  = np.percentile(s, 50)  # bottom 50% becomes blue
+            p_high = np.percentile(s, 99)  # top 1% becomes red
+            if p_high > p_low:
+                cam[t] = np.clip((s - p_low) / (p_high - p_low), 0, 1)
+
+        return cam
+
+    def generate_per_slice(self, input_tensor, n_real):
+        """
+        For models that collapse the temporal dimension (e.g. ResNet),
+        run GradCAM independently for each exam slice.
+        input_tensor: [B, 1, T, H, W]
+        Returns cam of shape [n_real, H_cam, W_cam].
+        """
+        slices = []
+        for t in range(n_real):
+            single_slice = input_tensor[:, :, t:t+1, :, :]  # [B, 1, 1, H, W]
+            single_slice = single_slice.clone().requires_grad_(True)
+
+            self.model.eval()
+            output = self.model(single_slice)
+            self.model.zero_grad()
+            output[0].backward()
+
+            weights = self.gradients.mean(dim=[2, 3, 4], keepdim=True)
+            cam_t = (weights * self.activations).sum(dim=1, keepdim=True)
+            cam_t = torch.relu(cam_t).squeeze().cpu().numpy()
+
+            if cam_t.ndim == 3:
+                cam_t = cam_t[0]  # take first (only) temporal slice -> [H, W]
+            # cam_t is now 2D [H, W]
+
+            p_low  = np.percentile(cam_t, 50)
+            p_high = np.percentile(cam_t, 99)
+            if p_high > p_low:
+                cam_t = np.clip((cam_t - p_low) / (p_high - p_low), 0, 1)
+
+            slices.append(cam_t)
+
+        return np.stack(slices, axis=0)  # [n_real, H_cam, W_cam]
+
+    def remove_hooks(self):
+        self.forward_hook.remove()
+        self.backward_hook.remove()
+
+
+def get_target_layer(model, model_type):
+    if model_type == "model1":
+        return model.encoder.block4.conv2
+    else:
+        return model.encoder.layer4[0].conv2
+
+
+class SingleViewEncoder(torch.nn.Module):
+    def __init__(self, full_model):
+        super().__init__()
+        self.encoder    = full_model.encoder
+        self.classifier = full_model.classifier
+
+    def forward(self, x):
+        feat = self.encoder(x)
+        return self.classifier(feat)
+
+
+# -------------------------------------------------------------------------
+# Mask loading
+# -------------------------------------------------------------------------
+
+def load_masks_for_patient(patient_id, cancerous_dir, view_names):
+    patient_path = os.path.join(cancerous_dir, patient_id)
+    masks_root   = os.path.join(patient_path, 'masks')
+    result = {}
+    for view in view_names:
+        view_mask_dir = os.path.join(masks_root, view)
+        if not os.path.isdir(view_mask_dir):
+            result[view] = []
+            continue
+        mask_files = sorted([f for f in os.listdir(view_mask_dir) if f.endswith('.png')])
+        masks = []
+        for mf in mask_files:
+            m = cv2.imread(os.path.join(view_mask_dir, mf), cv2.IMREAD_GRAYSCALE)
+            masks.append(m)
+        result[view] = masks
+    return result
+
+
+# -------------------------------------------------------------------------
+# Visualization helpers
+# -------------------------------------------------------------------------
+
+def apply_heatmap(image_np, cam_slice, alpha=0.65):
+    """Blend a CAM slice onto a grayscale image, return RGB uint8."""
+    h, w = image_np.shape
+    cam_resized = cv2.resize(cam_slice.astype(np.float32), (w, h),
+                             interpolation=cv2.INTER_LINEAR)
+    cam_resized = cv2.GaussianBlur(cam_resized, (15, 15), 0)
+    cam_resized = np.clip(cam_resized, 0, 1)
+
+    img_rgb   = np.stack([image_np] * 3, axis=-1)
+    img_uint8 = (img_rgb * 255).astype(np.uint8)
+
+    heatmap = cv2.applyColorMap((cam_resized * 255).astype(np.uint8), cv2.COLORMAP_JET)
+    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+
+    overlay = ((1 - alpha) * img_uint8 + alpha * heatmap).astype(np.uint8)
+    return overlay
+
+
+def mask_to_display(mask_np, image_shape):
+    """
+    Convert a binary mask to an RGB display image:
+      - Background → dark gray
+      - Tumor region → bright red with some transparency feel
+    Also draws a red crosshair at the centroid if tumor is present.
+    """
+    h, w = image_shape
+    mask_resized = cv2.resize(mask_np.astype(np.float32), (w, h),
+                              interpolation=cv2.INTER_NEAREST)
+    has_tumor = mask_resized.max() > 127
+
+    # Dark background
+    display = np.zeros((h, w, 3), dtype=np.uint8)
+    display[:] = (30, 30, 30)
+
+    if has_tumor:
+        tumor_px = mask_resized > 127
+        # Fill tumor region red
+        display[tumor_px] = (220, 30, 30)
+
+        # Centroid crosshair
+        coords = np.argwhere(tumor_px)
+        cy = int(coords[:, 0].mean())
+        cx = int(coords[:, 1].mean())
+        cv2.drawMarker(display, (cx, cy), (255, 255, 0),
+                       cv2.MARKER_CROSS, markerSize=40, thickness=2)
+    else:
+        # Write "No tumor" label
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        text = "No tumor"
+        (tw, th), _ = cv2.getTextSize(text, font, 0.7, 2)
+        cv2.putText(display, text,
+                    ((w - tw) // 2, (h + th) // 2),
+                    font, 0.7, (150, 150, 150), 2, cv2.LINE_AA)
+
+    return display
+
+
+LABEL_MAP = {
+    'L_CC':  'Left CC',
+    'R_CC':  'Right CC',
+    'L_MLO': 'Left MLO',
+    'R_MLO': 'Right MLO',
+}
+
+COLS = ['Original', 'GradCAM Overlay', 'Mask']
+
+
+def save_gradcam_per_view(views_tensor, pad_mask_tensor, cam_dict,
+                          patient_id, masks_dict, output_dir,
+                          prob, view_names):
+    """
+    Save one figure per view.
+    Each figure: rows = real exams, cols = [Original | GradCAM | Mask]
+    Figure size is large so each panel is clearly readable.
+    """
+    real_t_per_view = pad_mask_tensor.sum(dim=1).tolist()  # [4] ints
+    os.makedirs(output_dir, exist_ok=True)
+
+    for vi, view_name in enumerate(view_names):
+        n_real     = int(real_t_per_view[vi])
+        cam        = cam_dict.get(view_name)        # shape [T, H, W] or None
+        view_masks = masks_dict.get(view_name, [])  # list of grayscale np arrays
+
+        if n_real == 0:
+            print(f"  {view_name}: no real exams, skipping.")
+            continue
+
+        # --- figure layout ---
+        # 3 panels wide, n_real rows tall
+        # Each panel: ~6 inches wide, ~7 inches tall → good for 256×384 or similar
+        panel_w = 5.5
+        panel_h = 6.5
+        fig_w = panel_w * 3 + 1.0   # +1 for left row-label margin
+        fig_h = panel_h * n_real + 1.2  # +1.2 for title + bottom
+
+        fig, axes = plt.subplots(n_real, 3,
+                                 figsize=(fig_w, fig_h),
+                                 squeeze=False)
+
+        for ti in range(n_real):
+            # Denormalize from [-1,1] → [0,1]
+            img_slice = views_tensor[vi, 0, ti].cpu().numpy()
+            img_slice = np.clip((img_slice + 1) / 2, 0, 1)
+            h_img, w_img = img_slice.shape
+
+            # --- Col 0: Original ---
+            axes[ti, 0].imshow(img_slice, cmap='gray', vmin=0, vmax=1)
+
+            # --- Col 1: GradCAM overlay ---
+            if cam is not None and cam.ndim == 3 and ti < cam.shape[0]:
+                overlay = apply_heatmap(img_slice, cam[ti])
+                axes[ti, 1].imshow(overlay)
+            else:
+                axes[ti, 1].imshow(img_slice, cmap='gray', vmin=0, vmax=1)
+                axes[ti, 1].text(0.5, 0.5, 'No CAM', transform=axes[ti, 1].transAxes,
+                                 ha='center', va='center', fontsize=13,
+                                 color='white', fontweight='bold')
+
+            # Tumor crosshair on overlay too
+            if ti < len(view_masks) and view_masks[ti] is not None:
+                mask = view_masks[ti]
+                coords = np.argwhere(mask > 127)
+                if len(coords) > 0:
+                    cy = coords[:, 0].mean()
+                    cx = coords[:, 1].mean()
+                    mask_h, mask_w = mask.shape
+                    cx_s = np.clip(cx * w_img / mask_w, 0, w_img - 1)
+                    cy_s = np.clip(cy * h_img / mask_h, 0, h_img - 1)
+                    for ax_col in [0, 1]:
+                        axes[ti, ax_col].plot(cx_s, cy_s, 'r+',
+                                              markersize=22, markeredgewidth=2.5)
+                        axes[ti, ax_col].plot(cx_s, cy_s, 'ro',
+                                              markersize=10,
+                                              markerfacecolor='none',
+                                              markeredgewidth=2,
+                                              markeredgecolor='red')
+
+            # --- Col 2: Mask ---
+            if ti < len(view_masks) and view_masks[ti] is not None:
+                mask_display = mask_to_display(view_masks[ti], (h_img, w_img))
+                axes[ti, 2].imshow(mask_display)
+            else:
+                # No mask file → solid dark panel with label
+                axes[ti, 2].imshow(np.zeros((h_img, w_img, 3), dtype=np.uint8) + 30)
+                axes[ti, 2].text(0.5, 0.5, 'No mask', transform=axes[ti, 2].transAxes,
+                                 ha='center', va='center', fontsize=13,
+                                 color='gray', fontweight='bold')
+
+            # Row label (exam number) on left
+            axes[ti, 0].set_ylabel(f'Exam {ti + 1}', fontsize=13,
+                                   fontweight='bold', rotation=90,
+                                   labelpad=8, va='center')
+
+            # Column headers on first row only
+            if ti == 0:
+                for ci, col_title in enumerate(COLS):
+                    axes[ti, ci].set_title(col_title, fontsize=13,
+                                           fontweight='bold', pad=8)
+
+            # Clean up all axes
+            for ci in range(3):
+                axes[ti, ci].set_xticks([])
+                axes[ti, ci].set_yticks([])
+                for spine in axes[ti, ci].spines.values():
+                    spine.set_visible(False)
+
+        # Legend
+        red_patch    = mpatches.Patch(color='red',   label='Tumor region (mask)')
+        yellow_patch = mpatches.Patch(color='yellow', label='Tumor centroid')
+        fig.legend(handles=[red_patch, yellow_patch],
+                   loc='lower right', fontsize=10, framealpha=0.85,
+                   bbox_to_anchor=(0.99, 0.01))
+
+        view_label = LABEL_MAP.get(view_name, view_name)
+        title = (f'GradCAM — Patient {patient_id} | {view_label} | '
+                 f'{MODEL_TYPE.upper()} | {DATA_TYPE} | '
+                 f'Cancer prob: {prob:.3f}')
+        plt.suptitle(title, fontsize=13, fontweight='bold', y=1.0)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.98])
+
+        save_path = os.path.join(output_dir, f'{patient_id}_{view_name}_gradcam.png')
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Saved: {save_path}")
+
+
+# -------------------------------------------------------------------------
+# Main
+# -------------------------------------------------------------------------
+
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Device: {device}")
+    print(f"Model: {MODEL_TYPE}, Data: {DATA_TYPE}")
+
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    view_names = ['L_CC', 'R_CC', 'L_MLO', 'R_MLO']
+
+    if DATA_TYPE == "whole":
+        dataset = MammogramClassificationDataset(
+            cancerous_dir=CANCEROUS_TEST_WHOLE,
+            cancer_free_dir=CANCER_FREE_TEST_WHOLE,
+        )
+        checkpoint    = CHECKPOINT_MODEL1_WHOLE if MODEL_TYPE == "model1" else CHECKPOINT_MODEL2_WHOLE
+        cancerous_dir = CANCEROUS_TEST_WHOLE
+    elif DATA_TYPE == "whole_v2":
+        dataset = MammogramClassificationDataset(
+            cancerous_dir=CANCEROUS_TEST_WHOLE_V2,
+            cancer_free_dir=CANCER_FREE_TEST_WHOLE_V2,
+        )
+        checkpoint    = CHECKPOINT_MODEL1_WHOLE_V2 if MODEL_TYPE == "model1" else CHECKPOINT_MODEL2_WHOLE
+        cancerous_dir = CANCEROUS_TEST_WHOLE_V2
+    elif DATA_TYPE == "patches":
+        dataset = PatchClassificationDataset(
+            cancer_dir=CANCER_TEST_PATCHES,
+            cancer_free_dir=CANCER_FREE_TEST_PATCHES,
+        )
+        checkpoint    = CHECKPOINT_MODEL1_PATCHES if MODEL_TYPE == "model1" else CHECKPOINT_MODEL2_PATCHES
+        cancerous_dir = CANCER_TEST_PATCHES
+
+    print(f"Test samples: {len(dataset)}")
+
+    loader = DataLoader(dataset, batch_size=1, shuffle=False,
+                        num_workers=4, pin_memory=False)
+
+    if MODEL_TYPE == "model1":
+        full_model = MammogramClassifier(num_views=4, embed_dim=256)
+    else:
+        full_model = MammogramResNetClassifier(num_views=4, embed_dim=256)
+
+    full_model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=False))
+    full_model.to(device)
+    full_model.eval()
+    print(f"Loaded weights from {checkpoint}")
+
+    single_enc   = SingleViewEncoder(full_model).to(device)
+    target_layer = get_target_layer(full_model, MODEL_TYPE)
+    gradcam      = GradCAM3D(single_enc, target_layer)
+
+    true_positives = 0
+
+    for views, pad_mask, labels, patients in loader:
+        if labels[0].item() != 1:
+            continue
+
+        views_dev = views.to(device)
+        with torch.no_grad():
+            logit = full_model(views_dev)
+        prob = torch.sigmoid(logit).item()
+
+        if prob < 0.5:
+            print(f"  Skipping {patients[0]} — false negative (prob={prob:.3f})")
+            continue
+
+        patient_id = patients[0]
+        print(f"\nGenerating GradCAM for patient {patient_id} (prob={prob:.3f})")
+        true_positives += 1
+
+        masks_dict = {}
+        if DATA_TYPE in ("whole", "whole_v2"):
+            masks_dict = load_masks_for_patient(patient_id, cancerous_dir, view_names)
+
+        cam_dict = {}
+        real_t_per_view = pad_mask[0].sum(dim=1).tolist()  # [4] ints
+        for vi, view_name in enumerate(view_names):
+            single_view = views[:, vi, :, :, :].to(device)
+            n_real_v = int(real_t_per_view[vi])
+            try:
+                with torch.enable_grad():
+                    if MODEL_TYPE == "model2":
+                        cam = gradcam.generate_per_slice(single_view, n_real_v)
+                    else:
+                        cam = gradcam.generate(single_view)
+                cam_dict[view_name] = cam
+                print(f"  {view_name}: cam shape={cam.shape} min={cam.min():.3f} max={cam.max():.3f}")
+            except Exception as e:
+                print(f"  [WARNING] GradCAM failed for {view_name}: {e}")
+                cam_dict[view_name] = None
+
+        save_gradcam_per_view(
+            views[0], pad_mask[0], cam_dict,
+            patient_id, masks_dict, OUTPUT_DIR,
+            prob, view_names
+        )
+
+    gradcam.remove_hooks()
+    print(f"\nDone. GradCAM generated for {true_positives} true positive patients.")
+    print(f"Results saved to: {OUTPUT_DIR}")
+
+
+if __name__ == "__main__":
+    main()
