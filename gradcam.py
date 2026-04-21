@@ -5,8 +5,10 @@ gradcam.py
 Generates heatmap overlays for all 4 views of true positive patients.
 
 Works with:
-    - Model 1 (MammogramClassifier - custom 3D CNN)
-    - Model 2 (MammogramResNetClassifier - MedicalNet ResNet-10)
+    - Model 1 (MammogramClassifier         — custom 3D CNN)
+    - Model 2 (MammogramResNetClassifier   — MedicalNet ResNet-10)
+    - Model 3 (MammogramVNetClassifier     — VNet)
+    - Model 4 (MammogramResNet50Classifier — ResNet-50 3D)
 
 For each true positive patient, for each view:
     - Saves a SEPARATE figure per view: {patient_id}_{view}_gradcam.png
@@ -35,8 +37,8 @@ from torch.utils.data import DataLoader
 # CONFIG — edit these for each run
 # -------------------------------------------------------------------------
 
-MODEL_TYPE = "model2"   # "model1" or "model2"
-DATA_TYPE  = "whole"    # "whole" | "whole_v2" (512x384) | "patches"
+MODEL_TYPE = "model4"   # "model1" | "model2" | "model3" | "model4"
+DATA_TYPE  = "patches"    # "whole" | "whole_v2" (512x384) | "patches"
 
 CANCEROUS_TEST_WHOLE      = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed\test\cancerous"
 CANCER_FREE_TEST_WHOLE    = r"C:\Users\culya\Desktop\data_bakalarka\data\dataset_processed\test\cancer_free"
@@ -52,6 +54,10 @@ CHECKPOINT_MODEL1_WHOLE_V2 = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\
 CHECKPOINT_MODEL1_PATCHES  = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model1\experiments\classification\patches\results\best_model_clf_patches.pth"
 CHECKPOINT_MODEL2_WHOLE    = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model2\experiments\classification\whole_mamms\results\best_model_resnet_clf.pth"
 CHECKPOINT_MODEL2_PATCHES  = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model2\experiments\classification\patches\results\best_model_resnet_clf_patches.pth"
+CHECKPOINT_MODEL3_WHOLE    = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model3\experiments\classification\whole_mamms\results\best_model_vnet_clf.pth"
+CHECKPOINT_MODEL3_PATCHES  = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model3\experiments\classification\patches\results\best_model_vnet_clf_patches.pth"
+CHECKPOINT_MODEL4_WHOLE    = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model4\experiments\classification\whole_mamms\results\best_model_resnet50_clf.pth"
+CHECKPOINT_MODEL4_PATCHES  = r"C:\Skola\Bakalarka\Model1\default\pngs_processed\model4\experiments\classification\patches\results\best_model_resnet50_clf_patches.pth"
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'results', 'gradcam',
                           f'{MODEL_TYPE}_{DATA_TYPE}')
@@ -62,8 +68,12 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), 'results', 'gradcam',
 
 if MODEL_TYPE == "model1":
     from model1.experiments.classification.classifier3d import MammogramClassifier
-else:
+elif MODEL_TYPE == "model2":
     from model2.resnet3d import MammogramResNetClassifier
+elif MODEL_TYPE == "model3":
+    from model3.vnet3d import MammogramVNetClassifier
+elif MODEL_TYPE == "model4":
+    from model4.resnet50_3d import MammogramResNet50Classifier
 
 if DATA_TYPE in ("whole", "whole_v2"):
     from model1.experiments.classification.whole_mamms.dataset3d_clf import MammogramClassificationDataset
@@ -90,6 +100,10 @@ class GradCAM3D:
         self.gradients = grad_output[0].detach()
 
     def generate(self, input_tensor):
+        """
+        Generate GradCAM heatmap for input_tensor [B, 1, T, H, W].
+        Returns cam [T, H_cam, W_cam] normalized per-slice.
+        """
         self.model.eval()
         input_tensor = input_tensor.clone().requires_grad_(True)
 
@@ -104,11 +118,11 @@ class GradCAM3D:
         if cam.ndim == 2:
             cam = cam[np.newaxis, ...]
 
-        # Per-slice percentile stretch — forces each slice to use full color range
+        # Per-slice percentile stretch
         for t in range(cam.shape[0]):
             s = cam[t]
-            p_low  = np.percentile(s, 50)  # bottom 50% becomes blue
-            p_high = np.percentile(s, 99)  # top 1% becomes red
+            p_low  = np.percentile(s, 50)
+            p_high = np.percentile(s, 99)
             if p_high > p_low:
                 cam[t] = np.clip((s - p_low) / (p_high - p_low), 0, 1)
 
@@ -116,14 +130,14 @@ class GradCAM3D:
 
     def generate_per_slice(self, input_tensor, n_real):
         """
-        For models that collapse the temporal dimension (e.g. ResNet),
+        For models where temporal pooling collapses T early (Model 2, Model 4),
         run GradCAM independently for each exam slice.
         input_tensor: [B, 1, T, H, W]
-        Returns cam of shape [n_real, H_cam, W_cam].
+        Returns cam [n_real, H_cam, W_cam].
         """
         slices = []
         for t in range(n_real):
-            single_slice = input_tensor[:, :, t:t+1, :, :]  # [B, 1, 1, H, W]
+            single_slice = input_tensor[:, :, t:t+1, :, :]
             single_slice = single_slice.clone().requires_grad_(True)
 
             self.model.eval()
@@ -136,8 +150,7 @@ class GradCAM3D:
             cam_t = torch.relu(cam_t).squeeze().cpu().numpy()
 
             if cam_t.ndim == 3:
-                cam_t = cam_t[0]  # take first (only) temporal slice -> [H, W]
-            # cam_t is now 2D [H, W]
+                cam_t = cam_t[0]
 
             p_low  = np.percentile(cam_t, 50)
             p_high = np.percentile(cam_t, 99)
@@ -146,7 +159,7 @@ class GradCAM3D:
 
             slices.append(cam_t)
 
-        return np.stack(slices, axis=0)  # [n_real, H_cam, W_cam]
+        return np.stack(slices, axis=0)
 
     def remove_hooks(self):
         self.forward_hook.remove()
@@ -154,13 +167,46 @@ class GradCAM3D:
 
 
 def get_target_layer(model, model_type):
+    """
+    Return the last convolutional layer before GAP for each model.
+
+    Model 1 — encoder.block4.conv2
+        Last Conv3d in the 4th ConvBlock of the UNet encoder.
+
+    Model 2 — encoder.layer4[0].conv2
+        Last Conv3d of the first (only) BasicBlock in ResNet-10 layer4.
+        Uses generate_per_slice because ResNet-10 has a large initial stride
+        that collapses spatial dims quickly; per-slice gives cleaner maps.
+
+    Model 3 — encoder.down_tr256.ops[-1].conv1
+        Last LUConv inside the final DownTransition block of the VNet encoder.
+        down_tr256 doubles channels to 256; ops is an nn.Sequential of LUConv
+        modules; [-1] is the last one; .conv1 is its Conv3d.
+
+    Model 4 — encoder.layer4[2].conv3
+        Last Conv3d of the last Bottleneck3D in ResNet-50 layer4 (3 blocks,
+        index 2). conv3 is the 1×1×1 expansion conv, the final conv before
+        residual add and ReLU.
+        Uses generate_per_slice for the same reason as Model 2.
+    """
     if model_type == "model1":
         return model.encoder.block4.conv2
-    else:
+    elif model_type == "model2":
         return model.encoder.layer4[0].conv2
+    elif model_type == "model3":
+        return model.encoder.down_tr256.ops[-1].conv1
+    elif model_type == "model4":
+        return model.encoder.layer4[2].conv3
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
+
+
+# Models where GAP collapses T — use per-slice GradCAM
+PER_SLICE_MODELS = {"model2", "model4"}
 
 
 class SingleViewEncoder(torch.nn.Module):
+    """Wraps the full model to process a single view [B, 1, T, H, W]."""
     def __init__(self, full_model):
         super().__init__()
         self.encoder    = full_model.encoder
@@ -192,6 +238,24 @@ def load_masks_for_patient(patient_id, cancerous_dir, view_names):
         result[view] = masks
     return result
 
+def load_masks_for_patient_patches(patient_id, cancerous_dir, view_names):
+    patient_path = os.path.join(cancerous_dir, patient_id)
+    masks_root   = os.path.join(patient_path, 'masks')
+    result = {}
+    for view in view_names:
+        view_mask_dir = os.path.join(masks_root, view)
+        if not os.path.isdir(view_mask_dir):
+            result[view] = []
+            continue
+        mask_files = sorted([f for f in os.listdir(view_mask_dir) if f.endswith('.png')])
+        masks = []
+        for mf in mask_files:
+            m = cv2.imread(os.path.join(view_mask_dir, mf), cv2.IMREAD_GRAYSCALE)
+            if m is not None:
+                masks.append(m)
+        result[view] = masks
+    return result
+
 
 # -------------------------------------------------------------------------
 # Visualization helpers
@@ -217,33 +281,27 @@ def apply_heatmap(image_np, cam_slice, alpha=0.65):
 
 def mask_to_display(mask_np, image_shape):
     """
-    Convert a binary mask to an RGB display image:
-      - Background → dark gray
-      - Tumor region → bright red with some transparency feel
-    Also draws a red crosshair at the centroid if tumor is present.
+    Convert a binary mask to an RGB display image.
+    Tumor region → bright red; background → dark gray.
+    Draws a yellow crosshair at the centroid if tumor present.
     """
     h, w = image_shape
     mask_resized = cv2.resize(mask_np.astype(np.float32), (w, h),
                               interpolation=cv2.INTER_NEAREST)
     has_tumor = mask_resized.max() > 127
 
-    # Dark background
     display = np.zeros((h, w, 3), dtype=np.uint8)
     display[:] = (30, 30, 30)
 
     if has_tumor:
         tumor_px = mask_resized > 127
-        # Fill tumor region red
         display[tumor_px] = (220, 30, 30)
-
-        # Centroid crosshair
         coords = np.argwhere(tumor_px)
         cy = int(coords[:, 0].mean())
         cx = int(coords[:, 1].mean())
         cv2.drawMarker(display, (cx, cy), (255, 255, 0),
                        cv2.MARKER_CROSS, markerSize=40, thickness=2)
     else:
-        # Write "No tumor" label
         font = cv2.FONT_HERSHEY_SIMPLEX
         text = "No tumor"
         (tw, th), _ = cv2.getTextSize(text, font, 0.7, 2)
@@ -269,35 +327,30 @@ def save_gradcam_per_view(views_tensor, pad_mask_tensor, cam_dict,
                           prob, view_names):
     """
     Save one figure per view.
-    Each figure: rows = real exams, cols = [Original | GradCAM | Mask]
-    Figure size is large so each panel is clearly readable.
+    Rows = real exams; cols = [Original | GradCAM | Mask].
     """
-    real_t_per_view = pad_mask_tensor.sum(dim=1).tolist()  # [4] ints
+    real_t_per_view = pad_mask_tensor.sum(dim=1).tolist()
     os.makedirs(output_dir, exist_ok=True)
 
     for vi, view_name in enumerate(view_names):
         n_real     = int(real_t_per_view[vi])
-        cam        = cam_dict.get(view_name)        # shape [T, H, W] or None
-        view_masks = masks_dict.get(view_name, [])  # list of grayscale np arrays
+        cam        = cam_dict.get(view_name)
+        view_masks = masks_dict.get(view_name, [])
 
         if n_real == 0:
             print(f"  {view_name}: no real exams, skipping.")
             continue
 
-        # --- figure layout ---
-        # 3 panels wide, n_real rows tall
-        # Each panel: ~6 inches wide, ~7 inches tall → good for 256×384 or similar
         panel_w = 5.5
         panel_h = 6.5
-        fig_w = panel_w * 3 + 1.0   # +1 for left row-label margin
-        fig_h = panel_h * n_real + 1.2  # +1.2 for title + bottom
+        fig_w = panel_w * 3 + 1.0
+        fig_h = panel_h * n_real + 1.2
 
         fig, axes = plt.subplots(n_real, 3,
                                  figsize=(fig_w, fig_h),
                                  squeeze=False)
 
         for ti in range(n_real):
-            # Denormalize from [-1,1] → [0,1]
             img_slice = views_tensor[vi, 0, ti].cpu().numpy()
             img_slice = np.clip((img_slice + 1) / 2, 0, 1)
             h_img, w_img = img_slice.shape
@@ -311,11 +364,12 @@ def save_gradcam_per_view(views_tensor, pad_mask_tensor, cam_dict,
                 axes[ti, 1].imshow(overlay)
             else:
                 axes[ti, 1].imshow(img_slice, cmap='gray', vmin=0, vmax=1)
-                axes[ti, 1].text(0.5, 0.5, 'No CAM', transform=axes[ti, 1].transAxes,
+                axes[ti, 1].text(0.5, 0.5, 'No CAM',
+                                 transform=axes[ti, 1].transAxes,
                                  ha='center', va='center', fontsize=13,
                                  color='white', fontweight='bold')
 
-            # Tumor crosshair on overlay too
+            # Tumor crosshair on Original + Overlay
             if ti < len(view_masks) and view_masks[ti] is not None:
                 mask = view_masks[ti]
                 coords = np.argwhere(mask > 127)
@@ -339,32 +393,28 @@ def save_gradcam_per_view(views_tensor, pad_mask_tensor, cam_dict,
                 mask_display = mask_to_display(view_masks[ti], (h_img, w_img))
                 axes[ti, 2].imshow(mask_display)
             else:
-                # No mask file → solid dark panel with label
                 axes[ti, 2].imshow(np.zeros((h_img, w_img, 3), dtype=np.uint8) + 30)
-                axes[ti, 2].text(0.5, 0.5, 'No mask', transform=axes[ti, 2].transAxes,
+                axes[ti, 2].text(0.5, 0.5, 'No mask',
+                                 transform=axes[ti, 2].transAxes,
                                  ha='center', va='center', fontsize=13,
                                  color='gray', fontweight='bold')
 
-            # Row label (exam number) on left
             axes[ti, 0].set_ylabel(f'Exam {ti + 1}', fontsize=13,
                                    fontweight='bold', rotation=90,
                                    labelpad=8, va='center')
 
-            # Column headers on first row only
             if ti == 0:
                 for ci, col_title in enumerate(COLS):
                     axes[ti, ci].set_title(col_title, fontsize=13,
                                            fontweight='bold', pad=8)
 
-            # Clean up all axes
             for ci in range(3):
                 axes[ti, ci].set_xticks([])
                 axes[ti, ci].set_yticks([])
                 for spine in axes[ti, ci].spines.values():
                     spine.set_visible(False)
 
-        # Legend
-        red_patch    = mpatches.Patch(color='red',   label='Tumor region (mask)')
+        red_patch    = mpatches.Patch(color='red',    label='Tumor region (mask)')
         yellow_patch = mpatches.Patch(color='yellow', label='Tumor centroid')
         fig.legend(handles=[red_patch, yellow_patch],
                    loc='lower right', fontsize=10, framealpha=0.85,
@@ -384,6 +434,44 @@ def save_gradcam_per_view(views_tensor, pad_mask_tensor, cam_dict,
 
 
 # -------------------------------------------------------------------------
+# Model factory
+# -------------------------------------------------------------------------
+
+def build_model(model_type, embed_dim=256):
+    if model_type == "model1":
+        return MammogramClassifier(num_views=4, embed_dim=embed_dim)
+    elif model_type == "model2":
+        return MammogramResNetClassifier(num_views=4, embed_dim=embed_dim)
+    elif model_type == "model3":
+        return MammogramVNetClassifier(num_views=4, embed_dim=embed_dim)
+    elif model_type == "model4":
+        return MammogramResNet50Classifier(num_views=4, embed_dim=embed_dim)
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}")
+
+
+def get_checkpoint(model_type, data_type):
+    mapping = {
+        ("model1", "whole"):    CHECKPOINT_MODEL1_WHOLE,
+        ("model1", "whole_v2"): CHECKPOINT_MODEL1_WHOLE_V2,
+        ("model1", "patches"):  CHECKPOINT_MODEL1_PATCHES,
+        ("model2", "whole"):    CHECKPOINT_MODEL2_WHOLE,
+        ("model2", "whole_v2"): CHECKPOINT_MODEL2_WHOLE,
+        ("model2", "patches"):  CHECKPOINT_MODEL2_PATCHES,
+        ("model3", "whole"):    CHECKPOINT_MODEL3_WHOLE,
+        ("model3", "whole_v2"): CHECKPOINT_MODEL3_WHOLE,
+        ("model3", "patches"):  CHECKPOINT_MODEL3_PATCHES,
+        ("model4", "whole"):    CHECKPOINT_MODEL4_WHOLE,
+        ("model4", "whole_v2"): CHECKPOINT_MODEL4_WHOLE,
+        ("model4", "patches"):  CHECKPOINT_MODEL4_PATCHES,
+    }
+    key = (model_type, data_type)
+    if key not in mapping:
+        raise ValueError(f"No checkpoint configured for {key}")
+    return mapping[key]
+
+
+# -------------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------------
 
@@ -395,26 +483,24 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     view_names = ['L_CC', 'R_CC', 'L_MLO', 'R_MLO']
 
+    # --- Dataset ---
     if DATA_TYPE == "whole":
         dataset = MammogramClassificationDataset(
             cancerous_dir=CANCEROUS_TEST_WHOLE,
             cancer_free_dir=CANCER_FREE_TEST_WHOLE,
         )
-        checkpoint    = CHECKPOINT_MODEL1_WHOLE if MODEL_TYPE == "model1" else CHECKPOINT_MODEL2_WHOLE
         cancerous_dir = CANCEROUS_TEST_WHOLE
     elif DATA_TYPE == "whole_v2":
         dataset = MammogramClassificationDataset(
             cancerous_dir=CANCEROUS_TEST_WHOLE_V2,
             cancer_free_dir=CANCER_FREE_TEST_WHOLE_V2,
         )
-        checkpoint    = CHECKPOINT_MODEL1_WHOLE_V2 if MODEL_TYPE == "model1" else CHECKPOINT_MODEL2_WHOLE
         cancerous_dir = CANCEROUS_TEST_WHOLE_V2
-    elif DATA_TYPE == "patches":
+    else:  # patches
         dataset = PatchClassificationDataset(
             cancer_dir=CANCER_TEST_PATCHES,
             cancer_free_dir=CANCER_FREE_TEST_PATCHES,
         )
-        checkpoint    = CHECKPOINT_MODEL1_PATCHES if MODEL_TYPE == "model1" else CHECKPOINT_MODEL2_PATCHES
         cancerous_dir = CANCER_TEST_PATCHES
 
     print(f"Test samples: {len(dataset)}")
@@ -422,19 +508,23 @@ def main():
     loader = DataLoader(dataset, batch_size=1, shuffle=False,
                         num_workers=4, pin_memory=False)
 
-    if MODEL_TYPE == "model1":
-        full_model = MammogramClassifier(num_views=4, embed_dim=256)
-    else:
-        full_model = MammogramResNetClassifier(num_views=4, embed_dim=256)
-
-    full_model.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=False))
+    # --- Model ---
+    checkpoint = get_checkpoint(MODEL_TYPE, DATA_TYPE)
+    full_model = build_model(MODEL_TYPE)
+    full_model.load_state_dict(
+        torch.load(checkpoint, map_location=device, weights_only=False)
+    )
     full_model.to(device)
     full_model.eval()
     print(f"Loaded weights from {checkpoint}")
 
+    # --- GradCAM setup ---
     single_enc   = SingleViewEncoder(full_model).to(device)
     target_layer = get_target_layer(full_model, MODEL_TYPE)
     gradcam      = GradCAM3D(single_enc, target_layer)
+    use_per_slice = MODEL_TYPE in PER_SLICE_MODELS
+    print(f"GradCAM target: {MODEL_TYPE} → {type(target_layer).__name__} "
+          f"| per-slice={use_per_slice}")
 
     true_positives = 0
 
@@ -458,20 +548,24 @@ def main():
         masks_dict = {}
         if DATA_TYPE in ("whole", "whole_v2"):
             masks_dict = load_masks_for_patient(patient_id, cancerous_dir, view_names)
+        elif DATA_TYPE == "patches":
+            masks_dict = load_masks_for_patient_patches(patient_id, cancerous_dir, view_names)
 
         cam_dict = {}
-        real_t_per_view = pad_mask[0].sum(dim=1).tolist()  # [4] ints
+        real_t_per_view = pad_mask[0].sum(dim=1).tolist()
+
         for vi, view_name in enumerate(view_names):
             single_view = views[:, vi, :, :, :].to(device)
             n_real_v = int(real_t_per_view[vi])
             try:
                 with torch.enable_grad():
-                    if MODEL_TYPE == "model2":
+                    if use_per_slice:
                         cam = gradcam.generate_per_slice(single_view, n_real_v)
                     else:
                         cam = gradcam.generate(single_view)
                 cam_dict[view_name] = cam
-                print(f"  {view_name}: cam shape={cam.shape} min={cam.min():.3f} max={cam.max():.3f}")
+                print(f"  {view_name}: cam={cam.shape} "
+                      f"min={cam.min():.3f} max={cam.max():.3f}")
             except Exception as e:
                 print(f"  [WARNING] GradCAM failed for {view_name}: {e}")
                 cam_dict[view_name] = None
