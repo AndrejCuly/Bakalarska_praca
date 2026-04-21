@@ -1,0 +1,10 @@
+HYBRID EXPERIMENT RESULTS — Model 2 ResNet-10
+============================================================
+
+Train+Val patients: 5320 (positives: 174)
+Test patients:      942 (positives: 33)
+
+Decision Tree (classification): AUC=0.7095, Sens=0.7879, Spec=0.6194
+Random Forest (classification): AUC=0.7500, Sens=0.1818, Spec=0.9241
+Logistic Regression (scoring): AUC=0.7635, Sens=0.9091, Spec=0.5754
+Gradient Boosting (scoring): AUC=0.7224, Sens=0.0000, Spec=0.9967

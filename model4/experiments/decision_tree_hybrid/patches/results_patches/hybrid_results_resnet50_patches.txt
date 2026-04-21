@@ -1,0 +1,10 @@
+HYBRID EXPERIMENT RESULTS — Model 4 ResNet50 3D (Patches)
+============================================================
+
+Train+Val patients: 5791 (positives: 175)
+Test patients:      1021 (positives: 32)
+
+Decision Tree: AUC=1.0000, Sens=1.0000, Spec=1.0000
+Random Forest: AUC=1.0000, Sens=1.0000, Spec=1.0000
+Logistic Regression: AUC=1.0000, Sens=1.0000, Spec=1.0000
+Gradient Boosting: AUC=1.0000, Sens=1.0000, Spec=1.0000

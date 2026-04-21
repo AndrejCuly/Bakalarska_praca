@@ -1,0 +1,10 @@
+HYBRID EXPERIMENT RESULTS — Model 4 ResNet50 3D (Whole Mammograms)
+============================================================
+
+Train+Val patients: 5320 (positives: 174)
+Test patients:      942 (positives: 33)
+
+Decision Tree: AUC=0.4989, Sens=0.0000, Spec=0.9978
+Random Forest: AUC=0.5000, Sens=0.0000, Spec=1.0000
+Logistic Regression: AUC=0.7903, Sens=0.0000, Spec=1.0000
+Gradient Boosting: AUC=0.7207, Sens=0.0000, Spec=0.9989

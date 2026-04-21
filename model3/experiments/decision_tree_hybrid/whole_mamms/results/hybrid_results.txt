@@ -1,0 +1,10 @@
+HYBRID EXPERIMENT RESULTS — Model 3 VNet (Whole Mammograms)
+============================================================
+
+Train+Val patients: 5320 (positives: 174)
+Test patients:      942 (positives: 33)
+
+Decision Tree (classification): AUC=0.7409, Sens=0.8485, Spec=0.6282
+Random Forest (classification): AUC=0.7686, Sens=0.3939, Spec=0.8955
+Logistic Regression (scoring): AUC=0.7848, Sens=0.9091, Spec=0.6117
+Gradient Boosting (scoring): AUC=0.7629, Sens=0.0000, Spec=0.9967

@@ -1,0 +1,18 @@
+SEGMENTATION TEST RESULTS — Model 1 (3D U-Net)
+=======================================================
+Test samples total:              3768
+Samples with tumor ground truth: 58
+
+Mean Dice (DSC):   0.0000  (std: 0.0000)
+Mean IoU:          0.0000  (std: 0.0000)
+Median Dice:       0.0000
+Median IoU:        0.0000
+
+Ground-truth tumor pixels: 54,236
+Predicted tumor pixels:    2,518,598,133
+
+Conclusion: model massively over-predicts tumor regions.
+Despite over-prediction, Dice = 0 because the predicted
+mask does not overlap with the tiny true tumor locations.
+This is caused by extreme pixel-level class imbalance —
+tumor pixels represent <0.1% of all image pixels.

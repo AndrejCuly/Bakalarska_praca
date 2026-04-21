@@ -4,8 +4,7 @@ train_clf_patches_resnet.py
 Patch-level binary classification using Model 2 — MedicalNet ResNet-10.
 
 Label:
-    _tumor patches from cancerous patients    → 1
-    _normal_0 patches from cancerous patients → 0
+    patches from cancerous patients           → 1
     all cancer_free patches                   → 0
 """
 

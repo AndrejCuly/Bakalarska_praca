@@ -1,10 +1,10 @@
 HYBRID EXPERIMENT RESULTS — PATCHES
 ============================================================
 
-Train+Val samples: 6242 (positives: 179)
-Test samples:      1108 (positives: 33)
+Train+Val samples: 5791 (positives: 175)
+Test samples:      1021 (positives: 32)
 
-Decision Tree (classification): AUC=1.0000, Sens=1.0000, Spec=1.0000
+Decision Tree (classification): AUC=0.9844, Sens=0.9687, Spec=1.0000
 Random Forest (classification): AUC=1.0000, Sens=1.0000, Spec=1.0000
 Logistic Regression (scoring): AUC=1.0000, Sens=1.0000, Spec=1.0000
-Gradient Boosting (scoring): AUC=1.0000, Sens=1.0000, Spec=1.0000
+Gradient Boosting (scoring): AUC=0.9844, Sens=0.9687, Spec=1.0000
